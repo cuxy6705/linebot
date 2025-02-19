@@ -34,7 +34,7 @@ CHANNEL_SECRET = os.getenv('CHANNEL_SECRET')
 app = Flask(__name__)
 
 line_bot_api = LineBotApi(CHANNEL_ACCESS_TOKEN)
-handler = WebhookHandler(CHANNEL_SECRET)
+line_handler = WebhookHandler(CHANNEL_SECRET)
 
 # 建立背景排程器
 scheduler = BackgroundScheduler()
@@ -72,7 +72,7 @@ def send_reminder(user_id, reminder_text):
         print("發送提醒失敗：", e)
 
 
-@handler.add(MessageEvent, message=TextMessage)
+@line_handler.add(MessageEvent, message=TextMessage)
 def handle_message(event):
     user_id = event.source.user_id
     received_text = event.message.text.strip()
@@ -138,7 +138,7 @@ def callback():
 
     # handle webhook body
     try:
-        handler.handle(body, signature)
+        line_handler.handle(body, signature)
     except InvalidSignatureError:
         app.logger.info("Invalid signature. Please check your channel access token/channel secret.")
         abort(400)
