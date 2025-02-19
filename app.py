@@ -31,8 +31,8 @@ import os
 
 app = Flask(__name__)
 
-line_bot_api = LineBotApi(os.environ.get('CHANNEL_ACCESS_TOKEN'))
-line_handler = WebhookHandler(os.environ.get('CHANNEL_SECRET'))
+line_bot_api = LineBotApi(os.getenv('CHANNEL_ACCESS_TOKEN'))
+line_handler = WebhookHandler(os.getenv('CHANNEL_SECRET'))
 
 # 建立背景排程器
 scheduler = BackgroundScheduler()
