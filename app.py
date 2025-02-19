@@ -27,12 +27,14 @@ from linebot.exceptions import InvalidSignatureError
 from linebot.models import MessageEvent, TextMessage, TextSendMessage
 import os
 
-
+# 請填入你的 Channel Access Token 與 Channel Secret
+CHANNEL_ACCESS_TOKEN = os.getenv('CHANNEL_ACCESS_TOKEN')
+CHANNEL_SECRET = os.getenv('CHANNEL_SECRET')
 
 app = Flask(__name__)
 
-line_bot_api = LineBotApi(os.getenv('CHANNEL_ACCESS_TOKEN'))
-line_handler = WebhookHandler(os.getenv('CHANNEL_SECRET'))
+line_bot_api = LineBotApi(CHANNEL_ACCESS_TOKEN)
+handler = WebhookHandler(CHANNEL_SECRET)
 
 # 建立背景排程器
 scheduler = BackgroundScheduler()
@@ -70,7 +72,7 @@ def send_reminder(user_id, reminder_text):
         print("發送提醒失敗：", e)
 
 
-@line_handler.add(MessageEvent, message=TextMessage)
+@handler.add(MessageEvent, message=TextMessage)
 def handle_message(event):
     user_id = event.source.user_id
     received_text = event.message.text.strip()
@@ -136,7 +138,7 @@ def callback():
 
     # handle webhook body
     try:
-        line_handler.handle(body, signature)
+        handler.handle(body, signature)
     except InvalidSignatureError:
         app.logger.info("Invalid signature. Please check your channel access token/channel secret.")
         abort(400)
