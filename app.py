@@ -120,7 +120,7 @@ def handle_message(event):
     }
     supabase.table("reminders").insert(data).execute()
 
-    reply_text = f"已設定提醒：{dt.strftime('%Y-%m-%d %H:%M')} {desc}"
+    reply_text = f"已設定提123醒：{dt.strftime('%Y-%m-%d %H:%M')} {desc}"
     line_bot_api.reply_message(event.reply_token, TextSendMessage(text=reply_text))
 
 @app.route("/callback", methods=['POST'])
