@@ -26,106 +26,102 @@ from linebot import LineBotApi, WebhookHandler
 from linebot.exceptions import InvalidSignatureError
 from linebot.models import MessageEvent, TextMessage, TextSendMessage
 import os
+# Supabase
+from supabase import create_client, Client  # pip install supabase
 
 # 請填入你的 Channel Access Token 與 Channel Secret
 CHANNEL_ACCESS_TOKEN = os.getenv('CHANNEL_ACCESS_TOKEN')
 CHANNEL_SECRET = os.getenv('CHANNEL_SECRET')
+SUPABASE_URL = os.getenv('SUPABASE_URL')
+SUPABASE_ANON_KEY = os.getenv('SUPABASE_ANON_KEY')
 
 app = Flask(__name__)
 
 line_bot_api = LineBotApi(CHANNEL_ACCESS_TOKEN)
 line_handler = WebhookHandler(CHANNEL_SECRET)
 
+supabase: Client = create_client(SUPABASE_URL, SUPABASE_ANON_KEY)
+
 # 建立背景排程器
 scheduler = BackgroundScheduler()
 scheduler.start()
 
-def parse_date(date_str):
+def parse_date_time(date_str, time_str):
     """
-    解析不帶年份的日期字串，支援「5/30」或「5月30」格式，預設年份為今年，
-    同時也支援完整格式「YYYY-MM-DD」。
+    將日期與時間字串解析為 datetime 物件。支援:
+    - date_str: 2/19 or 2月19 or YYYY-MM-DD
+    - time_str: HH:MM (24小時制)
     """
     current_year = datetime.datetime.now().year
+    
     # 嘗試不帶年份的格式
-    formats = ['%m/%d', '%m月%d']
-    for fmt in formats:
+    date_formats = ['%m/%d', '%m月%d']
+    date_obj = None
+    for fmt in date_formats:
         try:
-            dt = datetime.datetime.strptime(date_str, fmt)
-            # 用今年取代解析後的年份
-            dt = dt.replace(year=current_year)
-            return dt
+            temp = datetime.datetime.strptime(date_str, fmt)
+            date_obj = temp.replace(year=current_year)
+            break
         except ValueError:
-            continue
-    # 如果前面格式皆無法解析，嘗試完整格式
+            pass
+    
+    if not date_obj:
+        # 試試完整格式
+        try:
+            date_obj = datetime.datetime.strptime(date_str, '%Y-%m-%d')
+        except ValueError:
+            raise ValueError("日期格式錯誤")
+    
+    # 解析時間
     try:
-        return datetime.datetime.strptime(date_str, '%Y-%m-%d')
+        time_obj = datetime.datetime.strptime(time_str, '%H:%M')
     except ValueError:
-        raise ValueError("日期格式錯誤，請使用例如 MM/DD、MM月DD 或 YYYY-MM-DD 的格式。")
+        raise ValueError("時間格式錯誤")
 
-def send_reminder(user_id, reminder_text):
-    """
-    在指定時間發送提醒訊息給 user_id
-    """
-    try:
-        line_bot_api.push_message(user_id, TextSendMessage(text=f"提醒：{reminder_text}"))
-    except Exception as e:
-        print("發送提醒失敗：", e)
+    return date_obj.replace(hour=time_obj.hour, minute=time_obj.minute, second=0)
 
 
 @line_handler.add(MessageEvent, message=TextMessage)
 def handle_message(event):
     user_id = event.source.user_id
-    received_text = event.message.text.strip()
+    text = event.message.text.strip()
+    parts = text.split(' ', 2)  # 期望: [日期, 時間, 事件描述]
 
-    # 預期格式：日期 時間 事件描述
-    # 日期部分可使用 MM/DD、MM月DD 或 YYYY-MM-DD 格式，時間部分格式為 HH:MM
-    try:
-        # 以空白分割，最多切三個部分
-        parts = received_text.split(' ', 2)
-        if len(parts) != 3:
-            raise ValueError("格式錯誤")
-        date_str, time_str, event_desc = parts
-
-        # 解析日期部分
-        scheduled_date = parse_date(date_str)
-        # 解析時間部分，格式為 HH:MM
-        try:
-            time_obj = datetime.datetime.strptime(time_str, '%H:%M')
-        except ValueError:
-            raise ValueError("時間格式錯誤，請使用 HH:MM 格式（例如 23:00）")
-
-        # 將日期與時間合併
-        scheduled_time = scheduled_date.replace(hour=time_obj.hour, minute=time_obj.minute, second=0)
-
-        # 依據需求，提醒時間提前一小時
-        notify_time = scheduled_time - datetime.timedelta(hours=1)
-
-        now = datetime.datetime.now()
-        if notify_time <= now:
-            reply_text = "指定的提醒時間已過，請選擇未來的日期與時間。"
-            line_bot_api.reply_message(event.reply_token, TextSendMessage(text=reply_text))
-            return
-
-        # 加入排程工作，於 notify_time 發送提醒訊息
-        mixText = scheduled_time.strftime('%m/%d %H:%M') + event_desc
-        scheduler.add_job(
-            send_reminder,
-            trigger='date',
-            run_date=notify_time,
-            args=[user_id, mixText]
-        )
-
-        reply_text = (f"好的，將在 {notify_time.strftime('%Y-%m-%d %H:%M')} 提醒你：{event_desc}\n"
-                      f"(原定事件時間：{scheduled_time.strftime('%Y-%m-%d %H:%M')})")
-        line_bot_api.reply_message(event.reply_token, TextSendMessage(text=reply_text))
-
-    except Exception as e:
-        print("解析或排程錯誤：", e)
-        reply_text = ("請依照格式輸入：日期 時間 事件描述\n"
-                      "日期部分可使用 MM/DD、MM月DD 或 YYYY-MM-DD 格式，\n"
-                      "時間請使用 24 小時制 HH:MM 格式\n"
+    if len(parts) < 3:
+        # 格式不符，回覆提示
+        reply_text = ("請依照格式輸入：\n日期 時間 事件描述\n"
                       "例如：2/19 23:00 開會")
         line_bot_api.reply_message(event.reply_token, TextSendMessage(text=reply_text))
+        return
+
+    date_str, time_str, desc = parts
+    try:
+        dt = parse_date_time(date_str, time_str)
+    except ValueError:
+        reply_text = ("日期或時間格式錯誤！\n"
+                      "日期可用: MM/DD、MM月DD、YYYY-MM-DD\n"
+                      "時間請用 24 小時 HH:MM")
+        line_bot_api.reply_message(event.reply_token, TextSendMessage(text=reply_text))
+        return
+
+    # 檢查是否是過去時間
+    now = datetime.datetime.now()
+    if dt <= now:
+        reply_text = "指定的提醒時間已過，請輸入未來時間。"
+        line_bot_api.reply_message(event.reply_token, TextSendMessage(text=reply_text))
+        return
+
+    # 將提醒事件寫入資料庫
+    data = {
+        "user_id": user_id,
+        "notify_time": dt.isoformat(),  # 以 ISO8601 字串儲存
+        "text": desc,
+        "is_sent": False
+    }
+    supabase.table("reminders").insert(data).execute()
+
+    reply_text = f"已設定提醒：{dt.strftime('%Y-%m-%d %H:%M')} {desc}"
+    line_bot_api.reply_message(event.reply_token, TextSendMessage(text=reply_text))
 
 @app.route("/callback", methods=['POST'])
 def callback():
@@ -134,7 +130,7 @@ def callback():
 
     # get request body as text
     body = request.get_data(as_text=True)
-    app.logger.info("Request body: " + body)
+    app.logger.info(f"Request body: {body}")
 
     # handle webhook body
     try:
