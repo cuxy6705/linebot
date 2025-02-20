@@ -1,3 +1,4 @@
+import os
 import datetime
 from flask import Flask, request, abort
 from apscheduler.schedulers.background import BackgroundScheduler
@@ -5,46 +6,30 @@ from apscheduler.schedulers.background import BackgroundScheduler
 from linebot import LineBotApi, WebhookHandler
 from linebot.exceptions import InvalidSignatureError
 from linebot.models import MessageEvent, TextMessage, TextSendMessage
-from linebot.v3.messaging import (
-    Configuration,
-    ApiClient,
-    MessagingApi,
-    ReplyMessageRequest,
-    TextMessage
-)
+
+# Supabase
+from supabase import create_client, Client
+
+# Flask 應用初始化
 app = Flask(__name__)
 
-
-scheduler = BackgroundScheduler()
-scheduler.start()
-
-import datetime
-from flask import Flask, request, abort
-from apscheduler.schedulers.background import BackgroundScheduler
-
-from linebot import LineBotApi, WebhookHandler
-from linebot.exceptions import InvalidSignatureError
-from linebot.models import MessageEvent, TextMessage, TextSendMessage
-import os
-# Supabase
-from supabase import create_client, Client  # pip install supabase
-
-# 請填入你的 Channel Access Token 與 Channel Secret
+# 從環境變數讀取 LINE 與 Supabase 設定
 CHANNEL_ACCESS_TOKEN = os.getenv('CHANNEL_ACCESS_TOKEN')
 CHANNEL_SECRET = os.getenv('CHANNEL_SECRET')
 SUPABASE_URL = os.getenv('SUPABASE_URL')
 SUPABASE_ANON_KEY = os.getenv('SUPABASE_ANON_KEY')
 
-app = Flask(__name__)
-
+# 建立 LINE Bot 與 WebhookHandler
 line_bot_api = LineBotApi(CHANNEL_ACCESS_TOKEN)
 line_handler = WebhookHandler(CHANNEL_SECRET)
 
+# 建立 Supabase 連線
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_ANON_KEY)
 
-# 建立背景排程器
+# APScheduler（在 Serverless 環境中不會真正常駐）
 scheduler = BackgroundScheduler()
 scheduler.start()
+
 
 def parse_date_time(date_str, time_str):
     """
@@ -66,7 +51,7 @@ def parse_date_time(date_str, time_str):
             pass
     
     if not date_obj:
-        # 試試完整格式
+        # 試試完整格式: YYYY-MM-DD
         try:
             date_obj = datetime.datetime.strptime(date_str, '%Y-%m-%d')
         except ValueError:
@@ -83,6 +68,7 @@ def parse_date_time(date_str, time_str):
 
 @line_handler.add(MessageEvent, message=TextMessage)
 def handle_message(event):
+    """處理用戶傳入的文字訊息，解析日期/時間，並存入資料庫。"""
     user_id = event.source.user_id
     text = event.message.text.strip()
     parts = text.split(' ', 2)  # 期望: [日期, 時間, 事件描述]
@@ -99,7 +85,7 @@ def handle_message(event):
         dt = parse_date_time(date_str, time_str)
     except ValueError:
         reply_text = ("日期或時間格式錯誤！\n"
-                      "日期可用: MM/DD、MM月DD、YYYY-MM-DD\n"
+                      "日期可用: MM/DD、MM月DD 或 YYYY-MM-DD\n"
                       "時間請用 24 小時 HH:MM")
         line_bot_api.reply_message(event.reply_token, TextSendMessage(text=reply_text))
         return
@@ -120,26 +106,68 @@ def handle_message(event):
     }
     supabase.table("reminders").insert(data).execute()
 
-    reply_text = f"已設定提123醒：{dt.strftime('%Y-%m-%d %H:%M')} {desc}"
+    reply_text = f"已設定提醒：{dt.strftime('%Y-%m-%d %H:%M')} {desc}"
     line_bot_api.reply_message(event.reply_token, TextSendMessage(text=reply_text))
+
 
 @app.route("/callback", methods=['POST'])
 def callback():
-    # get X-Line-Signature header value
+    """LINE Webhook 的入口，用於接收事件 (Event)"""
     signature = request.headers['X-Line-Signature']
-
-    # get request body as text
     body = request.get_data(as_text=True)
     app.logger.info(f"Request body: {body}")
 
-    # handle webhook body
     try:
         line_handler.handle(body, signature)
     except InvalidSignatureError:
-        app.logger.info("Invalid signature. Please check your channel access token/channel secret.")
+        app.logger.info("Invalid signature. 請檢查你的 channel access token / channel secret。")
         abort(400)
 
     return 'OK'
 
+
+@app.route("/cron", methods=['GET', 'POST'])
+def cron():
+    """
+    提供給外部排程 (例如 Vercel Schedule、cron-job.org、GitHub Actions 等)
+    每 X 分鐘/小時呼叫此路徑，檢查資料庫中是否有到期但未發送(is_sent=false)的提醒，推播給用戶。
+    """
+    now = datetime.datetime.utcnow()  # 假設你的資料庫 notify_time 存的是 UTC
+    resp = supabase.table("reminders") \
+        .select("*") \
+        .lte("notify_time", now.isoformat()) \
+        .eq("is_sent", False) \
+        .execute()
+
+    rows = resp.data
+    if not rows:
+        return "No reminders to process", 200
+
+    success_count = 0
+    for row in rows:
+        user_id = row['user_id']
+        desc = row['text']
+        notify_time = row['notify_time']  # ISO8601 字串
+        try:
+            # 發送提醒
+            line_bot_api.push_message(
+                user_id, 
+                TextSendMessage(text=f"提醒：{desc}\n(原設定時間: {notify_time})")
+            )
+
+            # 更新 is_sent 為 True
+            supabase.table("reminders") \
+                .update({"is_sent": True}) \
+                .eq("id", row['id']) \
+                .execute()
+
+            success_count += 1
+        except Exception as e:
+            print("推播失敗:", e)
+
+    return f"Processed {success_count} reminders", 200
+
+
 if __name__ == "__main__":
-    app.run()
+    # 本地測試用，若在 Vercel 上則不需要這段或可保留
+    app.run(debug=True)
