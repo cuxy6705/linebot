@@ -11,5 +11,16 @@
         "src": "/(.*)",
         "dest": "app.py"
       }
+    ],
+    "functions": {
+        "api/cron.py": {
+        "runtime": "python3.12"
+        }
+    },
+    "crons": [
+        {
+        "path": "cron",
+        "schedule": "0 * * * *" 
+        }
     ]
   }

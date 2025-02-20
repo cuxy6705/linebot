@@ -1,3 +1,4 @@
 line-bot-sdk==3.7
 flask==3.0.0
 APScheduler==3.11.0
+supabase==2.13.0
