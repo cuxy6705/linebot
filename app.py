@@ -115,9 +115,9 @@ def handle_message(event):
             args=[user_id, mixText]
         )
 
-        # reply_text = (f"好的，將在 {notify_time.strftime('%Y-%m-%d %H:%M')} 提醒你：{event_desc}\n"
-        #               f"(原定事件時間：{scheduled_time.strftime('%Y-%m-%d %H:%M')})")
-        # line_bot_api.reply_message(event.reply_token, TextSendMessage(text=reply_text))
+        reply_text = (f"好的，將在 {notify_time.strftime('%Y-%m-%d %H:%M')} 提醒你：{event_desc}\n"
+                      f"(原定事件時間：{scheduled_time.strftime('%Y-%m-%d %H:%M')})")
+        line_bot_api.reply_message(event.reply_token, TextSendMessage(text=reply_text))
 
     except Exception as e:
         print("解析或排程錯誤：", e)
