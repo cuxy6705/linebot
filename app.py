@@ -118,7 +118,7 @@ def handle_message(event):
     supabase.table("reminders").insert(data).execute()
 
     reply_text = f"已設定提醒：{dt.strftime('%Y-%m-%d %H:%M')} {desc}"
-    line_bot_api.reply_message(event.reply_token, TextSendMessage(text=reply_text))
+    # line_bot_api.reply_message(event.reply_token, TextSendMessage(text=reply_text))
 
 
 @app.route("/callback", methods=['POST'])
@@ -159,15 +159,15 @@ def cron():
         user_id = row['user_id']
         desc = row['text']
         notify_time = row['notify_time']  # ISO8601 字串
-        notify_time = datetime.fromisoformat(notify_time)
-        local_dt = utc_dt.astimezone(notify_time)
+        utc_dt = datetime.fromisoformat(notify_time)
+        local_dt = utc_dt.astimezone(tz_taipei)
         display_str = local_dt.strftime("%-m/%-d %H:%M")
 
         try:
             # 發送提醒
             line_bot_api.push_message(
                 user_id, 
-                TextSendMessage(text=f"{display_str} {display_str})")
+                TextSendMessage(text=f"{display_str} {desc}")
             )
 
             # 更新 is_sent 為 True
