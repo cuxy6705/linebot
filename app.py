@@ -7,7 +7,9 @@ from apscheduler.schedulers.background import BackgroundScheduler
 
 from linebot import LineBotApi, WebhookHandler
 from linebot.exceptions import InvalidSignatureError
-from linebot.models import MessageEvent, TextMessage, TextSendMessage
+from linebot.models import (MessageEvent, TextMessage, TextSendMessage, 
+PostbackEvent, PostbackAction,
+TemplateSendMessage, ButtonsTemplate, MessageTemplateAction)
 
 # Supabase
 from supabase import create_client, Client
@@ -166,7 +168,18 @@ def cron():
             formatted_time = f"{local_time.month}/{local_time.day} {local_time:%H:%M}"
             line_bot_api.push_message(
                 user_id, 
-                TextSendMessage(text=f"{formatted_time} {desc}")
+                TemplateSendMessage(
+                    alt_text=f"{formatted_time} {desc}",
+                    template = ButtonsTemplate(
+                        title="要不要延長拉",
+                        actions=[
+                            PostbackAction(label="+30 分鐘", data=f"extend_time={row['id']}|30"),
+                            PostbackAction(label="+15 分鐘", data=f"extend_time={row['id']}|15"),
+                            PostbackAction(label="+10 分鐘", data=f"extend_time={row['id']}|10"),
+                            PostbackAction(label="+5 分鐘", data=f"extend_time={row['id']}|5")
+                        ]
+                    )
+                )
             )
 
             # 更新 is_sent 為 True
@@ -181,7 +194,52 @@ def cron():
 
     return f"Processed {success_count} reminders", 200
 
+@line_handler.add(PostbackEvent)
+def handle_postback(event):
+    """
+    處理使用者在 Template/Button 上按下的各種 PostbackAction。
+    這裡主要針對延長提醒的動作。
+    """
+    data = event.postback.data  # 例如 "extend_time=123|30"
+    
+    if data.startswith("extend_time="):
+        # 拆出提醒ID 與 延長分鐘數
+        raw = data.replace("extend_time=", "")  # 例如 "123|30"
+        reminder_id_str, minutes_str = raw.split("|")
+        reminder_id = int(reminder_id_str)
+        extension = int(minutes_str)
 
+        # 從資料庫撈出原本的提醒資訊
+        resp = supabase.table("reminders").select("*").eq("id", reminder_id).single().execute()
+        if not resp.data:
+            # 找不到資料，可能使用者按的舊按鈕 / 資料已刪除
+            line_bot_api.reply_message(
+                event.reply_token, 
+                TextSendMessage(text="找不到此提醒，無法延長。")
+            )
+            return
+
+        row = resp.data
+        old_notify_time_str = row['notify_time']  # 例如 "2025-02-21T07:35:00+00:00"
+        
+        # 字串轉 datetime (UTC)
+        old_notify_time_utc = datetime.datetime.fromisoformat(old_notify_time_str)
+        
+        # 計算新提醒時間
+        new_notify_time_utc = old_notify_time_utc + datetime.timedelta(minutes=extension)
+
+        # 更新資料庫 (notify_time + extension)，並把 is_sent 重設為 False
+        supabase.table("reminders").update({
+            "notify_time": new_notify_time_utc.isoformat(),
+            "is_sent": False
+        }).eq("id", reminder_id).execute()
+
+        # 回覆使用者
+        line_bot_api.reply_message(
+            event.reply_token,
+            TextSendMessage(text=f"已為您延長提醒 {extension} 分鐘。")
+        )
+        
 if __name__ == "__main__":
     # 本地測試用，若在 Vercel 上則不需要這段或可保留
     app.run(debug=True)
