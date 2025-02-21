@@ -161,9 +161,12 @@ def cron():
         notify_time = row['notify_time']  # ISO8601 字串
         try:
             # 發送提醒
+            notify_time_utc = datetime.datetime.fromisoformat(notify_time)
+            local_time = notify_time_utc.astimezone(tz_taipei)
+            formatted_time = f"{local_time.month}/{local_time.day} {local_time:%H:%M}"
             line_bot_api.push_message(
                 user_id, 
-                TextSendMessage(text=f"提醒：{desc}\n(原設定時間: {notify_time})")
+                TextSendMessage(text=f"提醒：{desc}\n(原設定時間: {formatted_time})")
             )
 
             # 更新 is_sent 為 True
