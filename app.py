@@ -1,5 +1,7 @@
 import os
 import datetime
+import pytz
+from datetime import timedelta
 from flask import Flask, request, abort
 from apscheduler.schedulers.background import BackgroundScheduler
 
@@ -18,6 +20,7 @@ CHANNEL_ACCESS_TOKEN = os.getenv('CHANNEL_ACCESS_TOKEN')
 CHANNEL_SECRET = os.getenv('CHANNEL_SECRET')
 SUPABASE_URL = os.getenv('SUPABASE_URL')
 SUPABASE_ANON_KEY = os.getenv('SUPABASE_ANON_KEY')
+tz_taipei = pytz.timezone("Asia/Taipei")
 
 # 建立 LINE Bot 與 WebhookHandler
 line_bot_api = LineBotApi(CHANNEL_ACCESS_TOKEN)
@@ -83,6 +86,14 @@ def handle_message(event):
     date_str, time_str, desc = parts
     try:
         dt = parse_date_time(date_str, time_str)
+        local_dt = tz_taipei.localize(dt)
+        local_dt = local_dt - timedelta(hours=1)
+        if local_dt <= datetime.datetime.now(tz_taipei):
+            reply_text = "指定的提醒時間已過(提早後)，請輸入未來時間。"
+            line_bot_api.reply_message(event.reply_token, TextSendMessage(text=reply_text))
+            return
+
+        utc_dt = local_dt.astimezone(pytz.utc)
     except ValueError:
         reply_text = ("日期或時間格式錯誤！\n"
                       "日期可用: MM/DD、MM月DD 或 YYYY-MM-DD\n"
@@ -100,7 +111,7 @@ def handle_message(event):
     # 將提醒事件寫入資料庫
     data = {
         "user_id": user_id,
-        "notify_time": dt.isoformat(),  # 以 ISO8601 字串儲存
+        "notify_time": utc_dt.isoformat(),  # 以 ISO8601 字串儲存
         "text": desc,
         "is_sent": False
     }
