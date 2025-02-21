@@ -117,8 +117,8 @@ def handle_message(event):
     }
     supabase.table("reminders").insert(data).execute()
 
-    reply_text = f"已設定提醒：{dt.strftime('%Y-%m-%d %H:%M')} {desc}"
-    line_bot_api.reply_message(event.reply_token, TextSendMessage(text=reply_text))
+    # reply_text = f"已設定提醒：{dt.strftime('%Y-%m-%d %H:%M')} {desc}"
+    # line_bot_api.reply_message(event.reply_token, TextSendMessage(text=reply_text))
 
 
 @app.route("/callback", methods=['POST'])
@@ -166,7 +166,7 @@ def cron():
             formatted_time = f"{local_time.month}/{local_time.day} {local_time:%H:%M}"
             line_bot_api.push_message(
                 user_id, 
-                TextSendMessage(text=f"提醒：{desc}\n(原設定時間: {formatted_time})")
+                TextSendMessage(text=f"{formatted_time} {desc}")
             )
 
             # 更新 is_sent 為 True
