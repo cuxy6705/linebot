@@ -118,9 +118,7 @@ def handle_message(event):
         "text": desc,
         "is_sent": False
     }
-    response = supabase.table("reminders").insert(data).execute()
-    print("[DEBUG] insert response data:", response.data)
-    print("[DEBUG] insert response error:", response.error)
+    supabase.table("reminders").insert(data).execute()
     # 依需求，若要回覆設定成功，也可回覆
     # line_bot_api.reply_message(
     #     event.reply_token,
