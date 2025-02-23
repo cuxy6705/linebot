@@ -104,8 +104,8 @@ def handle_message(event):
         line_bot_api.reply_message(event.reply_token, TextSendMessage(text=reply_text))
         return
 
-    # 檢查是否是過去時間
-    now = datetime.datetime.now()
+    # 檢查是否是過去時間(以台灣時間判斷)
+    now = datetime.datetime.now(tz_taipei)
     if dt <= now:
         reply_text = "指定的提醒時間已過，請輸入未來時間。"
         line_bot_api.reply_message(event.reply_token, TextSendMessage(text=reply_text))
@@ -114,39 +114,27 @@ def handle_message(event):
     # 將提醒事件寫入資料庫
     data = {
         "user_id": user_id,
-        "notify_time": utc_dt.isoformat(),  # 以 ISO8601 字串儲存
+        "notify_time": utc_dt.isoformat(),  # 以 ISO8601 字串儲存 (UTC)
         "text": desc,
         "is_sent": False
     }
     supabase.table("reminders").insert(data).execute()
 
-    # reply_text = f"已設定提醒：{dt.strftime('%Y-%m-%d %H:%M')} {desc}"
-    # line_bot_api.reply_message(event.reply_token, TextSendMessage(text=reply_text))
+    # 依需求，若要回覆設定成功，也可回覆
+    # line_bot_api.reply_message(
+    #     event.reply_token,
+    #     TextSendMessage(text=f"已設定提醒：{dt.strftime('%Y-%m-%d %H:%M')} {desc}")
+    # )
 
 
-@app.route("/callback", methods=['POST'])
-def callback():
-    """LINE Webhook 的入口，用於接收事件 (Event)"""
-    signature = request.headers['X-Line-Signature']
-    body = request.get_data(as_text=True)
-    app.logger.info(f"Request body: {body}")
-
-    try:
-        line_handler.handle(body, signature)
-    except InvalidSignatureError:
-        app.logger.info("Invalid signature. 請檢查你的 channel access token / channel secret。")
-        abort(400)
-
-    return 'OK'
-
-
-@line_handler.add(MessageEvent, message=TextMessage)
+@line_handler.add(PostbackEvent)  # ★★★ 新增：處理使用者按下延長按鈕的 postback
 def handle_postback(event):
     """
     只要使用者在 Template/Buttons 上按下 PostbackAction，就會進到這裡。
     透過解析 event.postback.data 來處理「延長時間」功能。
     """
-    data = event.postback.data
+    data = event.postback.data  # e.g. "extend_time=123|30"
+    
     if data.startswith("extend_time="):
         # 拆出提醒ID 與 延長分鐘數
         raw = data.replace("extend_time=", "")  # 例如 "123|30"
@@ -187,13 +175,29 @@ def handle_postback(event):
         )
 
 
+@app.route("/callback", methods=['POST'])
+def callback():
+    """LINE Webhook 的入口，用於接收事件 (Event)"""
+    signature = request.headers['X-Line-Signature']
+    body = request.get_data(as_text=True)
+    app.logger.info(f"Request body: {body}")
+
+    try:
+        line_handler.handle(body, signature)
+    except InvalidSignatureError:
+        app.logger.info("Invalid signature. 請檢查你的 channel access token / channel secret。")
+        abort(400)
+
+    return 'OK'
+
+
 @app.route("/cron", methods=['GET', 'POST'])
 def cron():
     """
     提供給外部排程 (例如 Vercel Schedule、cron-job.org、GitHub Actions 等)
     每 X 分鐘/小時呼叫此路徑，檢查資料庫中是否有到期但未發送(is_sent=false)的提醒，推播給用戶。
     """
-    now = datetime.datetime.utcnow()  # 假設你的資料庫 notify_time 存的是 UTC
+    now = datetime.datetime.utcnow()  # 資料庫 notify_time 存的是 UTC
     resp = supabase.table("reminders") \
         .select("*") \
         .lte("notify_time", now.isoformat()) \
@@ -208,35 +212,38 @@ def cron():
     for row in rows:
         user_id = row['user_id']
         desc = row['text']
-        notify_time = row['notify_time']  # ISO8601 字串
-        id = row['id']
+        reminder_id = row['id']
+        notify_time_str = row['notify_time']  # ISO8601 (UTC)
+
         try:
-            # 發送提醒
-            notify_time_utc = datetime.datetime.fromisoformat(notify_time)
+            # 把 UTC 時間轉成台灣時間
+            notify_time_utc = datetime.datetime.fromisoformat(notify_time_str)
             local_time = notify_time_utc.astimezone(tz_taipei)
             formatted_time = f"{local_time.month}/{local_time.day} {local_time:%H:%M}"
+
+            # ★★★ 改用按鈕樣板推播，並帶有 "延長" 選項
+            # 在 actions 放多個 PostbackAction，帶不同的延長分鐘數
             line_bot_api.push_message(
-                user_id, 
+                user_id,
                 TemplateSendMessage(
-                    alt_text=f"{formatted_time} {desc}",
+                    alt_text=f"提醒：{desc}\n(原設定時間: {formatted_time})",
                     template=ButtonsTemplate(
-                        title="偷偷跟你說",
-                        text=f"{desc}",
+                        title="提醒到期",
+                        text=f"提醒：{desc}\n(原設定時間: {formatted_time})",
                         actions=[
-                            PostbackAction(label="延長 30 分鐘", data=f"extend_time={id}|30"),
-                            PostbackAction(label="延長 20 分鐘", data=f"extend_time={id}|20"),
-                            PostbackAction(label="延長 15 分鐘", data=f"extend_time={id}|15"),
-                            PostbackAction(label="延長 10 分鐘", data=f"extend_time={id}|10"),
+                            PostbackAction(label="延長 30 分鐘", data=f"extend_time={reminder_id}|30"),
+                            PostbackAction(label="延長 20 分鐘", data=f"extend_time={reminder_id}|20"),
+                            PostbackAction(label="延長 15 分鐘", data=f"extend_time={reminder_id}|15"),
+                            PostbackAction(label="延長 10 分鐘", data=f"extend_time={reminder_id}|10"),
                         ]
                     )
                 )
-                # TextSendMessage(text=f"{formatted_time} {desc}")
             )
 
-            # 更新 is_sent 為 True
+            # 更新 is_sent = True，表示已推播
             supabase.table("reminders") \
                 .update({"is_sent": True}) \
-                .eq("id", row['id']) \
+                .eq("id", reminder_id) \
                 .execute()
 
             success_count += 1
