@@ -7,7 +7,10 @@ from apscheduler.schedulers.background import BackgroundScheduler
 
 from linebot import LineBotApi, WebhookHandler
 from linebot.exceptions import InvalidSignatureError
-from linebot.models import MessageEvent, TextMessage, TextSendMessage, TemplateSendMessage, ButtonsTemplate, PostbackAction, PostbackEvent
+from linebot.models import (
+    MessageEvent, TextMessage, TextSendMessage,
+    PostbackEvent, TemplateSendMessage, ButtonsTemplate, PostbackAction
+)
 
 # Supabase
 from supabase import create_client, Client
