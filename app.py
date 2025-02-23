@@ -104,10 +104,10 @@ def handle_message(event):
         line_bot_api.reply_message(event.reply_token, TextSendMessage(text=reply_text))
         return
 
-    # 檢查是否是過去時間(以台灣時間判斷)
-    now = datetime.datetime.now(tz_taipei)
-    if dt <= now:
-        reply_text = "指定的提醒時間已過，請輸入未來時間。"
+
+    
+    if local_dt <= datetime.datetime.now(tz_taipei):
+        reply_text = "指定的提醒時間已過(提早後)，請輸入未來時間。"
         line_bot_api.reply_message(event.reply_token, TextSendMessage(text=reply_text))
         return
 
